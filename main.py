@@ -32,7 +32,6 @@ def calculate_energy(mag):
 def load_earthquake_data():
     url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
     
-    # 안정적인 요청을 위해 조회 기간을 최근 30일로 지정합니다.
     end_date = pd.Timestamp.now()
     start_date = end_date - pd.Timedelta(days=30)
     
@@ -49,7 +48,6 @@ def load_earthquake_data():
     
     try:
         response = requests.get(url, params=params, timeout=15)
-        # 응답 상태 확인
         if response.status_code != 200:
             st.error(f"USGS API 서버 응답 오류 (상태 코드: {response.status_code})")
             return pd.DataFrame()
@@ -107,7 +105,8 @@ else:
         with col1:
             st.subheader("📍 지진 발생 위치 지도")
             
-            fig = px.scatter_mapbox(
+            # 최신 Plotly API 적용 (scatter_map 사용)
+            fig = px.scatter_map(
                 filtered_df,
                 lat="latitude",
                 lon="longitude",
@@ -119,7 +118,7 @@ else:
                 zoom=2,
                 height=550
             )
-            fig.update_layout(mapbox_style="open-street-map")
+            fig.update_layout(map_style="open-street-map")
             fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
             st.plotly_chart(fig, use_container_width=True)
 
