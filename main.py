@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import requests
 import plotly.express as px
 from math import radians, cos, sin, asin, sqrt
@@ -22,20 +21,25 @@ def haversine(lon1, lat1, lon2, lat2):
     return c * r
 
 # 2. 구텐베르크-리히터 에너지 환산식 (Joules)
-# log10(E) = 4.8 + 1.5 * M
 def calculate_energy(mag):
     if pd.isna(mag) or mag is None:
         return 0.0
     log_e = 4.8 + 1.5 * float(mag)
     return 10 ** log_e
 
-# 3. USGS API 데이터 로드 (아시아 영역 경계 및 규모 4.0 이상)
+# 3. USGS API 데이터 로드 (최근 30일 데이터 기준)
 @st.cache_data(ttl=3600)
 def load_earthquake_data():
     url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+    
+    # 안정적인 요청을 위해 조회 기간을 최근 30일로 지정합니다.
+    end_date = pd.Timestamp.now()
+    start_date = end_date - pd.Timedelta(days=30)
+    
     params = {
         "format": "geojson",
-        "starttime": "2023-01-01",
+        "starttime": start_date.strftime("%Y-%m-%d"),
+        "endtime": end_date.strftime("%Y-%m-%d"),
         "minmagnitude": 4.0,
         "minlatitude": -10.0,  # 아시아 범위 설정 (남단)
         "maxlatitude": 60.0,   # 아시아 범위 설정 (북단)
@@ -44,7 +48,12 @@ def load_earthquake_data():
     }
     
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
+        # 응답 상태 확인
+        if response.status_code != 200:
+            st.error(f"USGS API 서버 응답 오류 (상태 코드: {response.status_code})")
+            return pd.DataFrame()
+            
         data = response.json()
     except Exception as e:
         st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
@@ -76,11 +85,11 @@ def load_earthquake_data():
     df = pd.DataFrame(events)
     return df
 
-with st.spinner("지진 데이터를 불러오는 중입니다..."):
+with st.spinner("USGS 서버에서 아시아 지진 데이터를 수집하는 중입니다..."):
     df = load_earthquake_data()
 
 if df.empty:
-    st.warning("불러올 지진 데이터가 없거나 네트워크 연결을 확인해주세요.")
+    st.warning("현재 지정한 조건에 해당하는 지진 데이터가 없거나 서버 응답이 원활하지 않습니다.")
 else:
     # 사이드바 필터
     st.sidebar.header("데이터 필터")
@@ -90,7 +99,7 @@ else:
     st.sidebar.write(f"총 검색된 지진 수: **{len(filtered_df)}**건")
 
     if filtered_df.empty:
-        st.info("조건에 맞는 지진 데이터가 없습니다.")
+        st.info("선택한 규모 조건에 맞는 지진이 없습니다.")
     else:
         # 메인 레이아웃
         col1, col2 = st.columns([2, 1])
