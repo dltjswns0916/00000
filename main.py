@@ -62,7 +62,7 @@ def load_earthquake_data():
         "maxlatitude": 60.0,   # 아시아 범위 (북단)
         "minlongitude": 60.0,  # 아시아 범위 (서단)
         "maxlongitude": 150.0, # 아시아 범위 (동단)
-        "limit": 1000           # 지도 표시 최적화를 위한 개수 설정
+        "limit": 1000
     }
     
     headers = {
@@ -113,7 +113,7 @@ with st.spinner("USGS 서버에서 아시아 지진 데이터를 수집하는 �
 if df.empty:
     st.warning("현재 지정한 조건에 해당하는 지진 데이터가 없거나 서버 응답이 원활하지 않습니다.")
 else:
-    # 세션 상태 초기화 (선택된 지진 인덱스 기억)
+    # 선택된 지진 인덱스 상태 저장
     if 'selected_idx' not in st.session_state:
         st.session_state.selected_idx = 0
 
@@ -127,7 +127,6 @@ else:
     if filtered_df.empty:
         st.info("선택한 규모 조건에 맞는 지진이 없습니다.")
     else:
-        # 선택 인덱스 범위 초과 방지
         if st.session_state.selected_idx >= len(filtered_df):
             st.session_state.selected_idx = 0
 
@@ -135,9 +134,9 @@ else:
 
         with col1:
             st.subheader("📍 지진 발생 위치 지도")
-            st.caption("※ 아시아 영역으로 제한되어 있습니다. 빨간 점을 누르면 해당 지진 정보가 선택됩니다.")
+            st.caption("※ 아시아 영역 내 지진 위치입니다. 빨간 점을 클릭하면 우측에 정보가 표시됩니다.")
             
-            # 1. 아시아 중심 좌표 및 아시아 영역 이동 제한 (max_bounds) 설정
+            # API 키가 필요 없는 기본 OpenStreetMap 타일 사용
             m = folium.Map(
                 location=[25.0, 105.0],
                 zoom_start=3,
@@ -147,15 +146,11 @@ else:
                 max_lat=60.0,
                 min_lon=60.0,
                 max_lon=150.0,
-                tiles="CartoDB positron"
+                tiles="OpenStreetMap"
             )
             
-            # 2. 지진 데이터 빨간 점(CircleMarker)으로 지도에 추가
             for idx, row in filtered_df.iterrows():
-                # 규모에 따른 원 크기 조절
                 radius = max(3, (row['magnitude'] - 3) * 3)
-                
-                # 선택된 지진 점은 파란색 테두리로 강조
                 is_selected = (idx == st.session_state.selected_idx)
                 
                 folium.CircleMarker(
@@ -164,17 +159,23 @@ else:
                     color='blue' if is_selected else 'darkred',
                     weight=3 if is_selected else 1,
                     fill=True,
-                    fill_color='#FF0000',  # 선명한 빨간색
+                    fill_color='#FF0000',
                     fill_opacity=0.8,
                     tooltip=f"규모 M{row['magnitude']} - {row['place']}",
-                    popup=str(idx)  # 클릭 식별용 인덱스값
+                    popup=str(idx)
                 ).add_to(m)
 
-            # Folium 지도 출력 및 클릭 데이터 수신
-            map_data = st_folium(m, width="100%", height=600, key="asia_earthquake_map")
+            # return_on_hover=False 설정을 추가하여 마우스 이동 시 무분별한 리로드 방지
+            map_data = st_folium(
+                m, 
+                width="100%", 
+                height=600, 
+                key="asia_earthquake_map",
+                returned_objects=["last_object_clicked_popup"]
+            )
 
-            # 빨간 점(마커) 클릭 시 실행
-            if map_data and map_data.get("last_object_clicked_popup"):
+            # 지도 클릭 시 상태 업데이트
+            if map_data and map_data.get("last_object_clicked_popup") is not None:
                 try:
                     clicked_idx = int(map_data["last_object_clicked_popup"])
                     if clicked_idx < len(filtered_df) and clicked_idx != st.session_state.selected_idx:
@@ -190,7 +191,6 @@ else:
                 lambda x: f"[{x['time'].strftime('%Y-%m-%d')}] M{x['magnitude']} - {x['place']}", axis=1
             )
             
-            # 드롭다운 선택 시에도 세션 상태 업데이트
             def on_select_change():
                 st.session_state.selected_idx = st.session_state.selectbox_idx
 
@@ -213,7 +213,6 @@ else:
             st.write(f"- **구텐베르크-리히터 방출 에너지:** `{selected_event['energy_joules']:.3e}` Joules")
             st.write(f"  *(약 TNT {selected_event['energy_tnt_tons']:,.2f} 톤)*")
             
-            # 에너지 상대 비교
             st.info(f"💡 **에너지 크기 비교 예시:**\n\n" + get_energy_comparison(selected_event['energy_joules']))
 
         # 반경 분석 섹션
@@ -227,7 +226,6 @@ else:
             axis=1
         )
 
-        # 반경 내 + 선택된 지진 이후 발생 지진 필터링
         nearby_after_df = filtered_df[
             (distances <= radius_km) & 
             (filtered_df['time'] > selected_event['time'])
@@ -240,7 +238,6 @@ else:
         col_stat2.metric("이후 지진 총 방출 에너지 (TNT 톤)", f"{nearby_after_df['energy_tnt_tons'].sum():,.2f} 톤")
         col_stat3.metric("이후 발생 최대 규모", f"{nearby_after_df['magnitude'].max() if not nearby_after_df.empty else '-'}")
 
-        # 주변 지진 목록 표
         st.markdown(f"**선택 지진 발생 이후 반경 {radius_km}km 내에서 일어난 지진 목록**")
         if nearby_after_df.empty:
             st.write("해당 지진 발생 이후 반경 내 추가 발생한 지진이 없습니다.")
