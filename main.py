@@ -110,7 +110,7 @@ with col_map:
         map_center = [20.0, 100.0]
         map_zoom = 4
 
-    # 지도 생성 (국경선 및 주요 도시가 잘 보이는 세련된 CartoDB voyager 타일 적용)
+    # 지도 생성 (API 키 워터마크가 생기지 않는 무료 OpenStreetMap 타일 적용)
     m = folium.Map(
         location=map_center,
         zoom_start=map_zoom,
@@ -121,7 +121,7 @@ with col_map:
         max_lat=60.0,
         min_lon=50.0,
         max_lon=150.0,
-        tiles="CartoDB voyager"
+        tiles="OpenStreetMap"
     )
     
     # 주요 도시 표기 (은은한 점과 툴팁)
