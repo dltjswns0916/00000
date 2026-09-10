@@ -46,13 +46,13 @@ def get_energy_comparison(joules):
         ratio = joules / atomic_bomb_hiroshima
         return f"💥 **히로시마 원자폭탄 약 {ratio:,.1f}개**가 폭발할 때 나오는 에너지"
 
-# 4. USGS API 데이터 로드 (API 과부하 방지를 위한 limit 설정 포함)
+# 4. USGS API 데이터 로드
 @st.cache_data(ttl=86400)
 def load_earthquake_data():
     url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
     
     end_date = pd.Timestamp.now()
-    start_date = end_date - pd.Timedelta(days=365 * 3) # 최근 3년 데이터 기준
+    start_date = end_date - pd.Timedelta(days=365 * 3) # 최근 3년 데이터
     
     params = {
         "format": "geojson",
@@ -63,7 +63,7 @@ def load_earthquake_data():
         "maxlatitude": 60.0,   # 아시아 범위 (북단)
         "minlongitude": 60.0,  # 아시아 범위 (서단)
         "maxlongitude": 150.0, # 아시아 범위 (동단)
-        "limit": 3000           # API 응답 오류(500/Timeout) 방지를 위한 최대 개수 제한
+        "limit": 3000           # 응답 오류 방지용 개수 제한
     }
     
     headers = {
@@ -101,7 +101,7 @@ def load_earthquake_data():
             'latitude': coords[1],
             'depth': coords[2],
             'energy_joules': energy_j,
-            'energy_tnt_tons': energy_j / 4.184e9 # Joule -> TNT 톤 환산
+            'energy_tnt_tons': energy_j / 4.184e9
         })
         
     df = pd.DataFrame(events)
@@ -129,8 +129,8 @@ else:
             st.subheader("📍 지진 발생 위치 지도 (점 클릭 시 해당 지진 선택)")
             st.caption("※ 아시아 영역으로 화면 범위가 고정되어 있습니다.")
             
-            # Plotly 지도 생성
-            fig = px.scatter_map(
+            # 백하얀 현상을 방지하기 위해 scatter_geo 사용 및 아시아 영역 고정
+            fig = px.scatter_geo(
                 filtered_df,
                 lat="latitude",
                 lon="longitude",
@@ -139,39 +139,44 @@ else:
                 color_continuous_scale="Reds",
                 hover_name="place",
                 hover_data={"time": True, "magnitude": True, "latitude": False, "longitude": False},
-                zoom=2,
-                center={"lat": 25.0, "lon": 105.0}, # 아시아 중심 위치
+                projection="natural earth",
                 height=600
             )
             
-            # 아시아 이동 범위 제한 (Max Bounds)
-            fig.update_layout(
-                map_style="open-street-map",
-                map_bounds={
-                    "west": 55.0,
-                    "east": 155.0,
-                    "south": -15.0,
-                    "north": 65.0
-                },
-                margin={"r":0,"t":0,"l":0,"b":0}
+            # 아시아 대륙 경계 및 범위 가두기
+            fig.update_geos(
+                center=dict(lat=25, lon=105),
+                lataxis_range=[-10, 60],
+                lonaxis_range=[60, 150],
+                showcountries=True,
+                countrycolor="LightGrey",
+                showcoastlines=True,
+                coastlinecolor="Gray",
+                showland=True,
+                landcolor="WhiteSmoke",
+                showocean=True,
+                oceancolor="AliceBlue"
             )
+            
+            fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
             
             # 지도에서 점 클릭 이벤트 수신
             selected_points = plotly_events(fig, click_event=True, hover_event=False)
 
-        # 지도 점 클릭 연동 로직
+        # 클릭한 위치 연동 로직
         selected_idx = 0
         if selected_points:
             clicked_point = selected_points[0]
-            point_lat = clicked_point['lat']
-            point_lon = clicked_point['lon']
+            point_lat = clicked_point.get('lat')
+            point_lon = clicked_point.get('lon')
             
-            matching_rows = filtered_df[
-                (filtered_df['latitude'].round(3) == round(point_lat, 3)) & 
-                (filtered_df['longitude'].round(3) == round(point_lon, 3))
-            ]
-            if not matching_rows.empty:
-                selected_idx = matching_rows.index[0]
+            if point_lat is not None and point_lon is not None:
+                matching_rows = filtered_df[
+                    (filtered_df['latitude'].round(2) == round(point_lat, 2)) & 
+                    (filtered_df['longitude'].round(2) == round(point_lon, 2))
+                ]
+                if not matching_rows.empty:
+                    selected_idx = matching_rows.index[0]
 
         with col2:
             st.subheader("🎯 특정 지진 선택 및 주변 분석")
@@ -200,7 +205,7 @@ else:
             # 에너지 상대 비교
             st.info(f"💡 **에너지 크기 비교 예시:**\n\n" + get_energy_comparison(selected_event['energy_joules']))
 
-        # 반경 100km 분석
+        # 반경 100km 및 이후 지진 발생 분석
         st.markdown("---")
         st.subheader("🔍 선택 지진 '이후' 반경 내 지진 발생 빈도 및 에너지 분석")
 
