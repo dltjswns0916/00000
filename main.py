@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import requests
+import folium
+from streamlit_folium import st_folium
 from math import radians, cos, sin, asin, sqrt
 
 # 페이지 설정
@@ -60,7 +62,7 @@ def load_earthquake_data():
         "maxlatitude": 60.0,   # 아시아 범위 (북단)
         "minlongitude": 60.0,  # 아시아 범위 (서단)
         "maxlongitude": 150.0, # 아시아 범위 (동단)
-        "limit": 2000
+        "limit": 1000           # 지도 표시 최적화를 위한 개수 설정
     }
     
     headers = {
@@ -90,6 +92,7 @@ def load_earthquake_data():
         energy_j = calculate_energy(mag)
         
         events.append({
+            'id': feature.get('id', ''),
             'title': props.get('title', ''),
             'place': props.get('place', '위치 정보 없음'),
             'time': pd.to_datetime(props['time'], unit='ms'),
@@ -110,6 +113,10 @@ with st.spinner("USGS 서버에서 아시아 지진 데이터를 수집하는 �
 if df.empty:
     st.warning("현재 지정한 조건에 해당하는 지진 데이터가 없거나 서버 응답이 원활하지 않습니다.")
 else:
+    # 세션 상태 초기화 (선택된 지진 인덱스 기억)
+    if 'selected_idx' not in st.session_state:
+        st.session_state.selected_idx = 0
+
     # 사이드바 필터
     st.sidebar.header("데이터 필터")
     min_mag = st.sidebar.slider("최소 규모", 4.0, 9.0, 4.0, step=0.1)
@@ -120,28 +127,61 @@ else:
     if filtered_df.empty:
         st.info("선택한 규모 조건에 맞는 지진이 없습니다.")
     else:
+        # 선택 인덱스 범위 초과 방지
+        if st.session_state.selected_idx >= len(filtered_df):
+            st.session_state.selected_idx = 0
+
         col1, col2 = st.columns([2, 1])
 
         with col1:
             st.subheader("📍 지진 발생 위치 지도")
-            st.caption("※ 빨간색 점으로 지진 발생 위치가 선명하게 표시됩니다.")
+            st.caption("※ 아시아 영역으로 제한되어 있습니다. 빨간 점을 누르면 해당 지진 정보가 선택됩니다.")
             
-            # st.map용 컬럼 이름 매핑 (lat, lon, size, color)
-            map_data = filtered_df.copy()
-            map_data['lat'] = map_data['latitude']
-            map_data['lon'] = map_data['longitude']
-            # 지진 규모에 따라 점 크기 설정 (원하는 경우 조정 가능)
-            map_data['size'] = map_data['magnitude'] * 10000
-            
-            # Streamlit 내장 네이티브 지도 사용 (빨간색 점 강제 적용)
-            st.map(
-                map_data,
-                latitude='lat',
-                longitude='lon',
-                size='size',
-                color='#FF0000',  # 선명한 순수 빨간색
-                zoom=2
+            # 1. 아시아 중심 좌표 및 아시아 영역 이동 제한 (max_bounds) 설정
+            m = folium.Map(
+                location=[25.0, 105.0],
+                zoom_start=3,
+                min_zoom=3,
+                max_bounds=True,
+                min_lat=-10.0,
+                max_lat=60.0,
+                min_lon=60.0,
+                max_lon=150.0,
+                tiles="CartoDB positron"
             )
+            
+            # 2. 지진 데이터 빨간 점(CircleMarker)으로 지도에 추가
+            for idx, row in filtered_df.iterrows():
+                # 규모에 따른 원 크기 조절
+                radius = max(3, (row['magnitude'] - 3) * 3)
+                
+                # 선택된 지진 점은 파란색 테두리로 강조
+                is_selected = (idx == st.session_state.selected_idx)
+                
+                folium.CircleMarker(
+                    location=[row['latitude'], row['longitude']],
+                    radius=radius,
+                    color='blue' if is_selected else 'darkred',
+                    weight=3 if is_selected else 1,
+                    fill=True,
+                    fill_color='#FF0000',  # 선명한 빨간색
+                    fill_opacity=0.8,
+                    tooltip=f"규모 M{row['magnitude']} - {row['place']}",
+                    popup=str(idx)  # 클릭 식별용 인덱스값
+                ).add_to(m)
+
+            # Folium 지도 출력 및 클릭 데이터 수신
+            map_data = st_folium(m, width="100%", height=600, key="asia_earthquake_map")
+
+            # 빨간 점(마커) 클릭 시 실행
+            if map_data and map_data.get("last_object_clicked_popup"):
+                try:
+                    clicked_idx = int(map_data["last_object_clicked_popup"])
+                    if clicked_idx < len(filtered_df) and clicked_idx != st.session_state.selected_idx:
+                        st.session_state.selected_idx = clicked_idx
+                        st.rerun()
+                except ValueError:
+                    pass
 
         with col2:
             st.subheader("🎯 특정 지진 선택 및 주변 분석")
@@ -150,14 +190,20 @@ else:
                 lambda x: f"[{x['time'].strftime('%Y-%m-%d')}] M{x['magnitude']} - {x['place']}", axis=1
             )
             
+            # 드롭다운 선택 시에도 세션 상태 업데이트
+            def on_select_change():
+                st.session_state.selected_idx = st.session_state.selectbox_idx
+
             selected_idx = st.selectbox(
-                "상세 정보를 확인할 지진을 목록에서 선택하세요:", 
+                "분석할 지진을 선택하거나 지도상의 빨간 점을 직접 누르세요:", 
                 range(len(event_options)), 
-                index=0,
-                format_func=lambda x: event_options[x]
+                index=st.session_state.selected_idx,
+                format_func=lambda x: event_options[x],
+                key="selectbox_idx",
+                on_change=on_select_change
             )
             
-            selected_event = filtered_df.iloc[selected_idx]
+            selected_event = filtered_df.iloc[st.session_state.selected_idx]
             
             st.markdown("---")
             st.markdown("### 📌 선택한 지진 상세 정보")
