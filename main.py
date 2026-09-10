@@ -63,7 +63,7 @@ def load_earthquake_data():
         "maxlatitude": 60.0,   # 아시아 범위 (북단)
         "minlongitude": 60.0,  # 아시아 범위 (서단)
         "maxlongitude": 150.0, # 아시아 범위 (동단)
-        "limit": 2000           # 안정적인 로딩을 위한 선별 수집
+        "limit": 2000
     }
     
     headers = {
@@ -126,53 +126,35 @@ else:
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            st.subheader("📍 지진 발생 위치 지도 (점 클릭 시 해당 지진 선택)")
-            st.caption("※ 아시아 영역으로 제한되어 있습니다. 점을 누르면 지진 정보가 업데이트됩니다.")
+            st.subheader("📍 지진 발생 위치 지도")
+            st.caption("※ 빨간색 점을 클릭하면 해당 지진 정보가 즉시 선택됩니다.")
             
-            # 지도 렌더링 (점 시각성 및 크기 보장)
-            fig = px.scatter_geo(
+            # Mapbox 지도를 사용하여 점을 선명하게 렌더링
+            fig = px.scatter_mapbox(
                 filtered_df,
                 lat="latitude",
                 lon="longitude",
                 size="magnitude",
                 color="magnitude",
-                size_max=18,                   # 점 크기 극대화
+                size_max=25,                       # 점 크기를 크게 설정
                 color_continuous_scale="Reds",
                 hover_name="place",
                 hover_data={"time": True, "magnitude": True, "latitude": False, "longitude": False},
-                projection="natural earth",
+                zoom=2.5,
+                center={"lat": 25.0, "lon": 105.0}, # 아시아 중심
                 height=600
             )
             
-            # 지도의 점 스타일 선명하게 고정
-            fig.update_traces(
-                marker=dict(
-                    opacity=0.8,
-                    line=dict(width=1, color="DarkRed")
-                )
+            # 외부 API 키 없이 사용 가능한 open-street-map 스타일 적용
+            fig.update_layout(
+                mapbox_style="open-street-map",
+                margin={"r":0, "t":0, "l":0, "b":0}
             )
             
-            # 아시아 지도 범위 고정 설정
-            fig.update_geos(
-                center=dict(lat=25, lon=105),
-                lataxis_range=[-10, 60],
-                lonaxis_range=[60, 150],
-                showcountries=True,
-                countrycolor="Gray",
-                showcoastlines=True,
-                coastlinecolor="Black",
-                showland=True,
-                landcolor="LightGrey",
-                showocean=True,
-                oceancolor="LightBlue"
-            )
-            
-            fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-            
-            # 클릭 이벤트 등록
+            # 지도의 점 클릭 이벤트 수신
             selected_points = plotly_events(fig, click_event=True, hover_event=False)
 
-        # 점 클릭 시 인덱스 매칭 처리
+        # 클릭 시 위치 인식 알고리즘
         selected_idx = 0
         if selected_points:
             clicked_point = selected_points[0]
@@ -180,11 +162,10 @@ else:
             point_lon = clicked_point.get('lon')
             point_idx = clicked_point.get('pointIndex')
             
-            # pointIndex가 전달된 경우 우선 적용
             if point_idx is not None and point_idx < len(filtered_df):
                 selected_idx = point_idx
             elif point_lat is not None and point_lon is not None:
-                # 위경도 근사값으로 위치 찾기
+                # 가장 가까운 좌표의 지진 찾기
                 distances = filtered_df.apply(
                     lambda row: haversine(point_lon, point_lat, row['longitude'], row['latitude']),
                     axis=1
