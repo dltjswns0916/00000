@@ -65,7 +65,7 @@ def load_earthquake_data(min_mag=4.0):
         st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
         return pd.DataFrame()
 
-# 주요 도시 데이터 (세계지도가 허전하지 않도록 표기)
+# 세계 및 아시아 주요 도시 데이터
 MAJOR_CITIES = [
     {"name": "🏛️ 서울 (Seoul)", "lat": 37.5665, "lng": 126.9780},
     {"name": "🏛️ 도쿄 (Tokyo)", "lat": 35.6762, "lng": 139.6503},
@@ -89,7 +89,7 @@ MAJOR_CITIES = [
 st.sidebar.title("⚙️ 설정 및 필터")
 min_mag = st.sidebar.slider("최소 규모", min_value=2.0, max_value=8.0, value=4.0, step=0.1)
 
-# [요구사항 반영 3] 반경 슬라이더를 지도 생성 전 선언하여 지도 상의 원 크기에 동적 반영
+# 반경 슬라이더 (지도 상의 원 크기 및 위치에 동적 반영)
 target_radius = st.sidebar.slider("탐색 반경 설정 (km)", min_value=100, max_value=1000, value=500, step=50)
 
 df = load_earthquake_data(min_mag)
@@ -101,7 +101,7 @@ col_map, col_info = st.columns([2.3, 1])
 with col_map:
     st.subheader("🌏 지진 분포 지도")
     
-    # [요구사항 반영 1] 선택된 지진이 있으면 그 점의 좌표를 중심으로 설정, 없으면 기본 아시아 중심 설정
+    # 선택된 지진이 있으면 그 점의 좌표를 중심으로 설정, 없으면 기본 중심 설정
     if st.session_state["selected_earthquake"]:
         sel_eq = st.session_state["selected_earthquake"]
         map_center = [sel_eq["latitude"], sel_eq["longitude"]]
@@ -110,7 +110,7 @@ with col_map:
         map_center = [20.0, 100.0]
         map_zoom = 4
 
-    # 지도 생성 (아시아 영역 경계 고정)
+    # 지도 생성 (국경선 및 주요 도시가 잘 보이는 세련된 CartoDB voyager 타일 적용)
     m = folium.Map(
         location=map_center,
         zoom_start=map_zoom,
@@ -121,47 +121,49 @@ with col_map:
         max_lat=60.0,
         min_lon=50.0,
         max_lon=150.0,
-        tiles="OpenStreetMap"
+        tiles="CartoDB voyager"
     )
     
-    # [요구사항 반영 2] 세계 주요 도시 표기 추가 (지도 보완)
+    # 주요 도시 표기 (은은한 점과 툴팁)
     cities_group = folium.FeatureGroup(name="주요 도시")
     for city in MAJOR_CITIES:
         folium.CircleMarker(
             location=[city["lat"], city["lng"]],
-            radius=3,
-            color="#333333",
+            radius=2.5,
+            stroke=False,
             fill=True,
             fill_color="#333333",
-            fill_opacity=0.8,
+            fill_opacity=0.7,
             tooltip=city["name"]
         ).add_to(cities_group)
     cities_group.add_to(m)
 
-    # [요구사항 반영 3 & 4] 선택한 점으로 원 이동 및 설정한 반경(km) 크기에 맞춰 원 표시
+    # 선택한 지진 중심 반경 원 (설정한 km 크기와 클릭 위치에 동적 연동)
     if st.session_state["selected_earthquake"]:
         sel_eq = st.session_state["selected_earthquake"]
         folium.Circle(
             location=[sel_eq["latitude"], sel_eq["longitude"]],
-            radius=target_radius * 1000,  # 설정된 km를 미터(m)로 변환
-            color="purple",
+            radius=target_radius * 1000,  # km -> m 변환
+            color="#8A2BE2",
             fill=True,
-            fill_color="purple",
-            fill_opacity=0.15,
-            weight=2,
+            fill_color="#8A2BE2",
+            fill_opacity=0.12,
+            weight=1.5,
             tooltip=f"선택 지진 중심 반경 {target_radius:,}km"
         ).add_to(m)
 
-    # 지진 마커 표시
+    # 지진 마커 표시 (두꺼운 바깥선 제거 stroke=False, 가볍고 산뜻한 전체 색상 채우기)
     for _, row in df.iterrows():
-        color = "red" if row["mag"] >= 6.0 else "orange" if row["mag"] >= 5.0 else "blue"
+        # 지진 규모별 색상 (밝은 레드 / 부드러운 주황 / 산뜻한 파랑)
+        fill_color = "#FF5252" if row["mag"] >= 6.0 else "#FF9F43" if row["mag"] >= 5.0 else "#48DBFB"
+        
         folium.CircleMarker(
             location=[row["latitude"], row["longitude"]],
-            radius=max(3, row["mag"] * 1.5),
-            color=color,
+            radius=max(3.5, row["mag"] * 1.5),
+            stroke=False,          # 테두리 선을 없애 가벼운 느낌 부여
             fill=True,
-            fill_color=color,
-            fill_opacity=0.6,
+            fill_color=fill_color,
+            fill_opacity=0.75,     # 투명도 조정하여 은은하게 채움
             popup=f"M{row['mag']} - {row['place']}",
             tooltip=f"M{row['mag']} ({row['time']})"
         ).add_to(m)
@@ -188,7 +190,6 @@ with col_map:
             ]
             if not matched.empty:
                 new_selected = matched.iloc[0].to_dict()
-                # 기존 선택과 다른 지진일 경우 세션에 반영하고 새로고침하여 지도를 재중심화
                 if not st.session_state["selected_earthquake"] or st.session_state["selected_earthquake"]["id"] != new_selected["id"]:
                     st.session_state["selected_earthquake"] = new_selected
                     st.rerun()
