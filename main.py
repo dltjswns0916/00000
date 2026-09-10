@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import plotly.express as px
-from streamlit_plotly_events import plotly_events
 from math import radians, cos, sin, asin, sqrt
 
 # 페이지 설정
@@ -22,7 +20,6 @@ def haversine(lon1, lat1, lon2, lat2):
     return c * r
 
 # 2. 구텐베르크-리히터 에너지 환산식 (Joules)
-# log10(E) = 4.8 + 1.5 * M
 def calculate_energy(mag):
     if pd.isna(mag) or mag is None:
         return 0.0
@@ -127,80 +124,36 @@ else:
 
         with col1:
             st.subheader("📍 지진 발생 위치 지도")
-            st.caption("※ 빨간색 점을 클릭하면 해당 지진 정보가 즉시 선택됩니다.")
+            st.caption("※ 빨간색 점으로 지진 발생 위치가 선명하게 표시됩니다.")
             
-            # 외부 API/타일 의존성이 없는 안정적인 scatter_geo 사용
-            fig = px.scatter_geo(
-                filtered_df,
-                lat="latitude",
-                lon="longitude",
-                size="magnitude",
-                color="magnitude",
-                size_max=22,                         # 점의 최대 크기를 크게 지정
-                color_continuous_scale="Reds",
-                hover_name="place",
-                hover_data={"time": True, "magnitude": True, "latitude": False, "longitude": False},
-                projection="natural earth",
-                height=600
+            # st.map용 컬럼 이름 매핑 (lat, lon, size, color)
+            map_data = filtered_df.copy()
+            map_data['lat'] = map_data['latitude']
+            map_data['lon'] = map_data['longitude']
+            # 지진 규모에 따라 점 크기 설정 (원하는 경우 조정 가능)
+            map_data['size'] = map_data['magnitude'] * 10000
+            
+            # Streamlit 내장 네이티브 지도 사용 (빨간색 점 강제 적용)
+            st.map(
+                map_data,
+                latitude='lat',
+                longitude='lon',
+                size='size',
+                color='#FF0000',  # 선명한 순수 빨간색
+                zoom=2
             )
-            
-            # 지진 점 선명도 및 투명도/테두리 강제 설정
-            fig.update_traces(
-                marker=dict(
-                    opacity=0.85,
-                    line=dict(width=1, color="DarkRed")
-                )
-            )
-            
-            # 지도 아시아 대륙 범위 고정 및 배경 색상 선명화
-            fig.update_geos(
-                center=dict(lat=25, lon=105),
-                lataxis_range=[-10, 60],
-                lonaxis_range=[60, 150],
-                showcountries=True,
-                countrycolor="Gray",
-                showcoastlines=True,
-                coastlinecolor="Black",
-                showland=True,
-                landcolor="LightGrey",
-                showocean=True,
-                oceancolor="LightBlue"
-            )
-            
-            fig.update_layout(margin={"r":0, "t":0, "l":0, "b":0})
-            
-            # 지도상의 점 클릭 이벤트 수신
-            selected_points = plotly_events(fig, click_event=True, hover_event=False)
-
-        # 점 클릭 시 지진 찾기 알고리즘
-        selected_idx = 0
-        if selected_points:
-            clicked_point = selected_points[0]
-            point_lat = clicked_point.get('lat')
-            point_lon = clicked_point.get('lon')
-            point_idx = clicked_point.get('pointIndex')
-            
-            if point_idx is not None and point_idx < len(filtered_df):
-                selected_idx = point_idx
-            elif point_lat is not None and point_lon is not None:
-                # 클릭한 위치와 가장 가까운 좌표 찾기
-                distances = filtered_df.apply(
-                    lambda row: haversine(point_lon, point_lat, row['longitude'], row['latitude']),
-                    axis=1
-                )
-                selected_idx = distances.idxmin()
 
         with col2:
             st.subheader("🎯 특정 지진 선택 및 주변 분석")
             
             event_options = filtered_df.apply(
-                lambda x: f"[{x['time'].strftime('%Y-%m-%d')}] 규모 {x['magnitude']} - {x['place']}", axis=1
+                lambda x: f"[{x['time'].strftime('%Y-%m-%d')}] M{x['magnitude']} - {x['place']}", axis=1
             )
             
             selected_idx = st.selectbox(
-                "분석할 지진을 선택하거나 지도상의 점을 직접 누르세요:", 
+                "상세 정보를 확인할 지진을 목록에서 선택하세요:", 
                 range(len(event_options)), 
-                index=int(selected_idx),
+                index=0,
                 format_func=lambda x: event_options[x]
             )
             
