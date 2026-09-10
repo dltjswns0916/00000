@@ -113,9 +113,13 @@ with st.spinner("USGS 서버에서 아시아 지진 데이터를 수집하는 �
 if df.empty:
     st.warning("현재 지정한 조건에 해당하는 지진 데이터가 없거나 서버 응답이 원활하지 않습니다.")
 else:
-    # 선택된 지진 인덱스 상태 저장
-    if 'selected_idx' not in st.session_state:
-        st.session_state.selected_idx = 0
+    # 세션 상태 관리 (선택된 지진 및 지도 중심/줌 유지)
+    if 'selected_eq_id' not in st.session_state:
+        st.session_state.selected_eq_id = df.iloc[0]['id'] if not df.empty else None
+    if 'map_center' not in st.session_state:
+        st.session_state.map_center = [25.0, 105.0]
+    if 'map_zoom' not in st.session_state:
+        st.session_state.map_zoom = 3
 
     # 사이드바 필터
     st.sidebar.header("데이터 필터")
@@ -127,19 +131,22 @@ else:
     if filtered_df.empty:
         st.info("선택한 규모 조건에 맞는 지진이 없습니다.")
     else:
-        if st.session_state.selected_idx >= len(filtered_df):
-            st.session_state.selected_idx = 0
+        # 선택된 ID가 현재 필터된 데이터에 없으면 첫번째 항목으로 지정
+        if st.session_state.selected_eq_id not in filtered_df['id'].values:
+            st.session_state.selected_eq_id = filtered_df.iloc[0]['id']
 
         col1, col2 = st.columns([2, 1])
 
         with col1:
             st.subheader("📍 지진 발생 위치 지도")
-            st.caption("※ 아시아 영역 내 지진 위치입니다. 빨간 점을 클릭하면 우측에 정보가 표시됩니다.")
+            st.caption("※ 아시아 지역 전역이 포함되도록 범위가 고정되어 있습니다. 빨간 점을 클릭하면 오른쪽 정보가 즉시 업데이트됩니다.")
             
-            # API 키가 필요 없는 기본 OpenStreetMap 타일 사용
+            # 아시아 대륙 전체가 다 보이도록 고정 경계 지정
+            asia_bounds = [[-10.0, 60.0], [60.0, 150.0]]
+            
             m = folium.Map(
-                location=[25.0, 105.0],
-                zoom_start=3,
+                location=st.session_state.map_center,
+                zoom_start=st.session_state.map_zoom,
                 min_zoom=3,
                 max_bounds=True,
                 min_lat=-10.0,
@@ -149,9 +156,12 @@ else:
                 tiles="OpenStreetMap"
             )
             
+            # 아시아 영역 고정
+            m.fit_bounds(asia_bounds)
+
             for idx, row in filtered_df.iterrows():
-                radius = max(3, (row['magnitude'] - 3) * 3)
-                is_selected = (idx == st.session_state.selected_idx)
+                radius = max(4, (row['magnitude'] - 3) * 3)
+                is_selected = (row['id'] == st.session_state.selected_eq_id)
                 
                 folium.CircleMarker(
                     location=[row['latitude'], row['longitude']],
@@ -159,30 +169,38 @@ else:
                     color='blue' if is_selected else 'darkred',
                     weight=3 if is_selected else 1,
                     fill=True,
-                    fill_color='#FF0000',
-                    fill_opacity=0.8,
+                    fill_color='#4A90E2' if is_selected else '#FF0000',
+                    fill_opacity=0.9 if is_selected else 0.75,
                     tooltip=f"규모 M{row['magnitude']} - {row['place']}",
-                    popup=str(idx)
+                    popup=row['id']  # 고유 ID 전송
                 ).add_to(m)
 
-            # return_on_hover=False 설정을 추가하여 마우스 이동 시 무분별한 리로드 방지
+            # 지도 클릭 수신 (리셋 현상 방지를 위해 필요한 정보만 요청)
             map_data = st_folium(
                 m, 
                 width="100%", 
                 height=600, 
                 key="asia_earthquake_map",
-                returned_objects=["last_object_clicked_popup"]
+                returned_objects=["last_object_clicked_popup", "zoom", "center"]
             )
 
-            # 지도 클릭 시 상태 업데이트
-            if map_data and map_data.get("last_object_clicked_popup") is not None:
-                try:
-                    clicked_idx = int(map_data["last_object_clicked_popup"])
-                    if clicked_idx < len(filtered_df) and clicked_idx != st.session_state.selected_idx:
-                        st.session_state.selected_idx = clicked_idx
+            # 지도에서 점 클릭 시 즉시 정보 갱신
+            if map_data:
+                # 줌 및 중심 위치 보존
+                if map_data.get("zoom"):
+                    st.session_state.map_zoom = map_data["zoom"]
+                if map_data.get("center"):
+                    st.session_state.map_center = [map_data["center"]["lat"], map_data["center"]["lng"]]
+
+                # 클릭한 지진 ID 수신
+                clicked_id = map_data.get("last_object_clicked_popup")
+                if clicked_id and clicked_id != st.session_state.selected_eq_id:
+                    if clicked_id in filtered_df['id'].values:
+                        st.session_state.selected_eq_id = clicked_id
                         st.rerun()
-                except ValueError:
-                    pass
+
+        # 현재 선택된 지진 인덱스 찾기
+        selected_row_idx = filtered_df[filtered_df['id'] == st.session_state.selected_eq_id].index[0]
 
         with col2:
             st.subheader("🎯 특정 지진 선택 및 주변 분석")
@@ -192,18 +210,19 @@ else:
             )
             
             def on_select_change():
-                st.session_state.selected_idx = st.session_state.selectbox_idx
+                idx = st.session_state.selectbox_idx
+                st.session_state.selected_eq_id = filtered_df.iloc[idx]['id']
 
-            selected_idx = st.selectbox(
+            st.selectbox(
                 "분석할 지진을 선택하거나 지도상의 빨간 점을 직접 누르세요:", 
                 range(len(event_options)), 
-                index=st.session_state.selected_idx,
+                index=int(selected_row_idx),
                 format_func=lambda x: event_options[x],
                 key="selectbox_idx",
                 on_change=on_select_change
             )
             
-            selected_event = filtered_df.iloc[st.session_state.selected_idx]
+            selected_event = filtered_df.iloc[selected_row_idx]
             
             st.markdown("---")
             st.markdown("### 📌 선택한 지진 상세 정보")
