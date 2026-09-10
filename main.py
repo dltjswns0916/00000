@@ -63,7 +63,7 @@ def load_earthquake_data():
         "maxlatitude": 60.0,   # 아시아 범위 (북단)
         "minlongitude": 60.0,  # 아시아 범위 (서단)
         "maxlongitude": 150.0, # 아시아 범위 (동단)
-        "limit": 3000           # 응답 오류 방지용 개수 제한
+        "limit": 2000           # 안정적인 로딩을 위한 선별 수집
     }
     
     headers = {
@@ -127,15 +127,16 @@ else:
 
         with col1:
             st.subheader("📍 지진 발생 위치 지도 (점 클릭 시 해당 지진 선택)")
-            st.caption("※ 아시아 영역으로 화면 범위가 고정되어 있습니다.")
+            st.caption("※ 아시아 영역으로 제한되어 있습니다. 점을 누르면 지진 정보가 업데이트됩니다.")
             
-            # 백하얀 현상을 방지하기 위해 scatter_geo 사용 및 아시아 영역 고정
+            # 지도 렌더링 (점 시각성 및 크기 보장)
             fig = px.scatter_geo(
                 filtered_df,
                 lat="latitude",
                 lon="longitude",
                 size="magnitude",
                 color="magnitude",
+                size_max=18,                   # 점 크기 극대화
                 color_continuous_scale="Reds",
                 hover_name="place",
                 hover_data={"time": True, "magnitude": True, "latitude": False, "longitude": False},
@@ -143,40 +144,52 @@ else:
                 height=600
             )
             
-            # 아시아 대륙 경계 및 범위 가두기
+            # 지도의 점 스타일 선명하게 고정
+            fig.update_traces(
+                marker=dict(
+                    opacity=0.8,
+                    line=dict(width=1, color="DarkRed")
+                )
+            )
+            
+            # 아시아 지도 범위 고정 설정
             fig.update_geos(
                 center=dict(lat=25, lon=105),
                 lataxis_range=[-10, 60],
                 lonaxis_range=[60, 150],
                 showcountries=True,
-                countrycolor="LightGrey",
+                countrycolor="Gray",
                 showcoastlines=True,
-                coastlinecolor="Gray",
+                coastlinecolor="Black",
                 showland=True,
-                landcolor="WhiteSmoke",
+                landcolor="LightGrey",
                 showocean=True,
-                oceancolor="AliceBlue"
+                oceancolor="LightBlue"
             )
             
             fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
             
-            # 지도에서 점 클릭 이벤트 수신
+            # 클릭 이벤트 등록
             selected_points = plotly_events(fig, click_event=True, hover_event=False)
 
-        # 클릭한 위치 연동 로직
+        # 점 클릭 시 인덱스 매칭 처리
         selected_idx = 0
         if selected_points:
             clicked_point = selected_points[0]
             point_lat = clicked_point.get('lat')
             point_lon = clicked_point.get('lon')
+            point_idx = clicked_point.get('pointIndex')
             
-            if point_lat is not None and point_lon is not None:
-                matching_rows = filtered_df[
-                    (filtered_df['latitude'].round(2) == round(point_lat, 2)) & 
-                    (filtered_df['longitude'].round(2) == round(point_lon, 2))
-                ]
-                if not matching_rows.empty:
-                    selected_idx = matching_rows.index[0]
+            # pointIndex가 전달된 경우 우선 적용
+            if point_idx is not None and point_idx < len(filtered_df):
+                selected_idx = point_idx
+            elif point_lat is not None and point_lon is not None:
+                # 위경도 근사값으로 위치 찾기
+                distances = filtered_df.apply(
+                    lambda row: haversine(point_lon, point_lat, row['longitude'], row['latitude']),
+                    axis=1
+                )
+                selected_idx = distances.idxmin()
 
         with col2:
             st.subheader("🎯 특정 지진 선택 및 주변 분석")
@@ -188,7 +201,7 @@ else:
             selected_idx = st.selectbox(
                 "분석할 지진을 선택하거나 지도상의 점을 직접 누르세요:", 
                 range(len(event_options)), 
-                index=selected_idx,
+                index=int(selected_idx),
                 format_func=lambda x: event_options[x]
             )
             
@@ -205,7 +218,7 @@ else:
             # 에너지 상대 비교
             st.info(f"💡 **에너지 크기 비교 예시:**\n\n" + get_energy_comparison(selected_event['energy_joules']))
 
-        # 반경 100km 및 이후 지진 발생 분석
+        # 반경 분석 섹션
         st.markdown("---")
         st.subheader("🔍 선택 지진 '이후' 반경 내 지진 발생 빈도 및 에너지 분석")
 
